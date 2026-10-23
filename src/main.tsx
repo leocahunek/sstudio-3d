@@ -7,45 +7,15 @@ import {useStudio, types, presets, type Light} from './store';
 import {Plus, Trash2, Download, Upload} from 'lucide-react';
 import './style.css';
 
-class ModelErrorBoundary extends React.Component<{children:React.ReactNode},{failed:boolean}> {
- state={failed:false};
- static getDerivedStateFromError(){return {failed:true};}
- componentDidCatch(error:Error){
-   console.error('Model import failed:',error);
-   useStudio.setState({modelUrl:null});
-   window.dispatchEvent(new CustomEvent('lc-model-error',{detail:error.message}));
- }
- render(){return this.state.failed?null:this.props.children;}
-}
 function Imported({url}:{url:string}) {
  const {scene}=useGLTF(url);
- const object=React.useMemo(()=>{
-   const copy=scene.clone(true);
-   copy.updateMatrixWorld(true);
-   const bounds=new THREE.Box3().setFromObject(copy);
-   const size=bounds.getSize(new THREE.Vector3());
-   const center=bounds.getCenter(new THREE.Vector3());
-   if(!Number.isFinite(size.y)||size.y<=0||Math.max(size.x,size.y,size.z)>100000)
-      throw new Error('Invalid model dimensions.');
-   // Preserve the model proportions, put the feet at ground level and
-   // center the subject relative to the studio camera.
-   const scale=1.85/size.y;
-   copy.scale.multiplyScalar(scale);
-   copy.position.set(-center.x*scale,-bounds.min.y*scale,-center.z*scale);
-   copy.traverse(child=>{
-     if((child as THREE.Mesh).isMesh){
-       (child as THREE.Mesh).castShadow=true;
-       (child as THREE.Mesh).receiveShadow=true;
-     }
-   });
-   return copy;
- },[scene]);
- return <primitive object={object}/>;
+ const obj=React.useMemo(()=>scene.clone(true),[scene]);
+ return <primitive object={obj}/>;
 }
 function Human(){
  const url=useStudio(s=>s.modelUrl),rotation=useStudio(s=>s.modelRotation);
  return <group rotation={[0,rotation*Math.PI/180,0]}>
- {url?<ModelErrorBoundary key={url}><Suspense fallback={null}><Imported url={url}/></Suspense></ModelErrorBoundary>:<group>
+ {url?<Suspense fallback={null}><Imported url={url}/></Suspense>:<group>
  <mesh position={[0,1.45,0]} castShadow><capsuleGeometry args={[.24,.65,8,24]}/><meshStandardMaterial color="#656c78"/></mesh>
  <mesh position={[0,2.13,0]} castShadow><sphereGeometry args={[.19,32,24]}/><meshStandardMaterial color="#b98a72"/></mesh>
  {[-.12,.12].map(x=><mesh key={x} position={[x,.55,0]} castShadow><capsuleGeometry args={[.095,.85]}/><meshStandardMaterial color="#343a43"/></mesh>)}
@@ -84,25 +54,6 @@ function Scene({setup=false}:{setup?:boolean}){
 }
 function App(){
  const s=useStudio(),chosen=s.lights.find(l=>l.id===s.selected);
- const [modelMessage,setModelMessage]=React.useState('');
- React.useEffect(()=>{
-   const handler=(event:Event)=>setModelMessage('Could not load model: '+((event as CustomEvent<string>).detail||'unsupported file'));
-   window.addEventListener('lc-model-error',handler);
-   return ()=>window.removeEventListener('lc-model-error',handler);
- },[]);
- const loadModel=(f?:File)=>{
-   if(!f)return;
-   if(!f.name.toLowerCase().endsWith('.glb')){
-     setModelMessage('Please use a self-contained .glb file. External .gltf resources are not supported in this uploader.');
-     return;
-   }
-   if(f.size>60*1024*1024){
-     setModelMessage('This model exceeds the 60 MB safety limit. Please optimize it before loading.');
-     return;
-   }
-   setModelMessage('Loading '+f.name+'…');
-   s.set({modelUrl:URL.createObjectURL(f)});
- };
  const file=useRef<HTMLInputElement>(null),model=useRef<HTMLInputElement>(null);
  const exportJson=()=>{const blob=new Blob([JSON.stringify({lights:s.lights},null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='lc-lighting-setup.json';a.click();URL.revokeObjectURL(url)};
  const importJson=async(f?:File)=>{if(!f)return;try{const data=JSON.parse(await f.text());if(!Array.isArray(data.lights))throw Error();s.set({lights:data.lights,selected:null})}catch{alert('Invalid setup JSON')}};
@@ -116,7 +67,7 @@ function App(){
  <button className="primary full" onClick={()=>{const e=document.getElementById('equipment') as HTMLSelectElement;s.add(e.value||types[0])}}><Plus size={15}/> Add equipment</button>
  <div className="equipment">{s.lights.map((l,i)=><button key={l.id} className={'equip '+(s.selected===l.id?'active':'')} onClick={()=>s.set({selected:l.id})}><span className="dot"/><span>{l.type}<small>Light {i+1} · {l.power}%</small></span><span onClick={e=>{e.stopPropagation();s.update(l.id,{enabled:!l.enabled})}}>{l.enabled?'●':'○'}</span></button>)}</div>
  <h3>Model</h3><label>Rotation <em>{s.modelRotation}°</em></label><input type="range" min="0" max="360" value={s.modelRotation} onChange={e=>s.set({modelRotation:+e.target.value})}/>
- <button className="full" onClick={()=>model.current?.click()}>Load human GLB</button><input ref={model} hidden type="file" accept=".glb" onChange={e=>{loadModel(e.target.files?.[0]);e.target.value=""}}/><button className="full" onClick={()=>{s.set({modelUrl:null});setModelMessage("Model removed.");}}>Reset human model</button>{modelMessage&&<p className="hint" role="status">{modelMessage}</p>}
+ <button className="full" onClick={()=>model.current?.click()}>Load human GLB / GLTF</button><input ref={model} hidden type="file" accept=".glb,.gltf" onChange={e=>{const f=e.target.files?.[0];if(f)s.set({modelUrl:URL.createObjectURL(f)})}}/>
  <p className="hint">Placeholder figure until you load a licensed realistic 3D human model. GLB recommended.</p></aside>
  <section className="work"><div className="viewheads"><strong>PHOTOGRAPHER VIEW</strong><div>
  <select value={s.framing} onChange={e=>s.set({framing:e.target.value})}>{['Portrait','Half body','Full body'].map(x=><option key={x}>{x}</option>)}</select>
